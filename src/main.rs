@@ -28,6 +28,7 @@ async fn perform_health_checks(server: &servers::Server) {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let wake_order = servers::parse_server_dependencies("./sample.yml")?;
+    println!("{:?}", wake_order);
     for server in wake_order {
         wol::send_wol_packet(&server.mac, &server.interface, server.vlan)?;
         println!("Sent WOL to {}", server.name);

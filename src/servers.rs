@@ -93,8 +93,6 @@ fn determine_wakeup_order(servers: &[Server]) -> Result<Vec<Server>, ServerConfi
         }
     }
 
-    // Reverse the order to get the correct topological sort
-    sorted.reverse();
     let servers_in_order: Vec<Server> = sorted
         .iter()
         .map(|name| *server_from_name.get(name).unwrap())
@@ -482,5 +480,44 @@ mod tests {
             let result = validate_health_check(&healthcheck);
             assert!(result.is_ok())
         }
+    }
+
+    #[test]
+    fn test_determine_wakeup_order() {
+        // Define the YAML string for servers with dependencies
+        let yaml_data = r#"
+        - name: "server_a"
+          mac: "00:11:22:33:44:55"
+          interface: "eth0"
+          depends:
+            - "server_b"
+            - "server_c"
+
+        - name: "server_b"
+          mac: "11:22:33:44:55:66"
+          interface: "eth0"
+          depends:
+            - "server_c"
+
+        - name: "server_c"
+          mac: "22:33:44:55:66:77"
+          interface: "eth0"
+        "#;
+
+        // Parse the YAML string into the expected structure
+        let servers: Vec<Server> =
+            serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
+
+        // Expected topologically sorted order (server_c first, then server_b, then server_a)
+        let expected_order = vec!["server_c", "server_b", "server_a"];
+
+        // Call the function to get the wakeup order
+        let result = determine_wakeup_order(&servers).expect("Failed to determine wakeup order");
+
+        // Check that the result matches the expected order
+        assert_eq!(
+            result.into_iter().map(|s| s.name).collect::<Vec<String>>(),
+            expected_order
+        );
     }
 }
