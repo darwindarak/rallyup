@@ -1,3 +1,4 @@
+use humantime::Duration;
 use regex::Regex;
 use serde::Deserialize;
 use std::{
@@ -23,21 +24,31 @@ pub enum ServerConfigError {
     BadHealthCheckDefinition(String),
 }
 
+fn default_duration() -> std::time::Duration {
+    std::time::Duration::from_secs(10)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HealthCheck {
     Http {
         url: String,
         status: Option<u16>,
+        #[serde(default = "default_duration", with = "humantime_serde")]
+        retry: std::time::Duration,
         #[serde(default, with = "serde_regex")]
         regex: Option<Regex>,
     },
     Port {
         ip: String,
         port: u32,
+        #[serde(default = "default_duration", with = "humantime_serde")]
+        retry: std::time::Duration,
     },
     Shell {
         command: String,
+        #[serde(default = "default_duration", with = "humantime_serde")]
+        retry: std::time::Duration,
         status: Option<u16>,
         #[serde(default, with = "serde_regex")]
         regex: Option<Regex>,
@@ -58,15 +69,45 @@ pub struct Server {
     pub check: Vec<HealthCheck>,
 }
 
+fn map_server_names(servers: &[Server]) -> HashMap<String, &Server> {
+    servers.iter().map(|s| (s.name.clone(), s)).collect()
+}
+
+fn determine_wakeup_order(servers: &[Server]) -> Result<Vec<String>, ServerConfigError> {
+    let server_from_name = map_server_names(servers);
+
+    let mut visited = HashSet::new();
+    let mut visiting = HashSet::new();
+    let mut sorted = Vec::new();
+
+    for server in servers {
+        if !visited.contains(&server.name) {
+            depth_first_search(
+                server,
+                &server_from_name,
+                &mut visited,
+                &mut visiting,
+                &mut sorted,
+            )?;
+        }
+    }
+
+    // Reverse the order to get the correct topological sort
+    sorted.reverse();
+    Ok(sorted)
+}
+
 fn depth_first_search(
     server: &Server,
-    names: &HashMap<String, &Server>,
+    server_from_name: &HashMap<String, &Server>,
     visited: &mut HashSet<String>,
     visiting: &mut HashSet<String>,
+    sorted: &mut Vec<String>,
 ) -> Result<(), ServerConfigError> {
     if visiting.contains(&server.name) {
         return Err(ServerConfigError::CircularDependency(server.name.clone()));
     }
+
     if visited.contains(&server.name) {
         return Ok(());
     }
@@ -74,35 +115,16 @@ fn depth_first_search(
     visiting.insert(server.name.clone());
 
     for dep in &server.depends {
-        let dep_server = names.get(dep).unwrap();
-        depth_first_search(dep_server, names, visited, visiting)?;
+        let dep_server = server_from_name
+            .get(dep)
+            .ok_or_else(|| ServerConfigError::UndefinedDependency(dep.clone()))?;
+        depth_first_search(dep_server, server_from_name, visited, visiting, sorted)?;
     }
 
     visiting.remove(&server.name);
     visited.insert(server.name.clone());
 
-    Ok(())
-}
-
-pub fn validate_server_dependencies(servers: &[Server]) -> Result<(), ServerConfigError> {
-    let names: HashMap<String, &Server> = servers.iter().map(|s| (s.name.clone(), s)).collect();
-
-    // Check for undefined dependencies
-    for server in servers {
-        for dep in &server.depends {
-            if !names.contains_key(dep) {
-                return Err(ServerConfigError::UndefinedDependency(dep.clone()));
-            }
-        }
-    }
-
-    // Check for circular dependencies with a depth first search
-    let mut visited = HashSet::new();
-    let mut visiting = HashSet::new();
-
-    for server in servers {
-        depth_first_search(server, &names, &mut visited, &mut visiting)?;
-    }
+    sorted.push(server.name.clone());
 
     Ok(())
 }
@@ -113,12 +135,17 @@ fn validate_health_check(healthcheck: &HealthCheck) -> Result<(), ServerConfigEr
             url: _,
             status,
             regex,
+            retry: _,
         } => {
             if status.is_none() && regex.is_none() {
                 return Err(ServerConfigError::BadHealthCheckDefinition("HTTP health check requires an HTTP status code to match and/or a Regex to match in the response".into()));
             }
         }
-        HealthCheck::Port { ip, port: _ } => {
+        HealthCheck::Port {
+            ip,
+            port: _,
+            retry: _,
+        } => {
             if ip.parse::<IpAddr>().is_err() {
                 return Err(ServerConfigError::BadHealthCheckDefinition(
                     "Port check requires a valid IP address".into(),
@@ -129,6 +156,7 @@ fn validate_health_check(healthcheck: &HealthCheck) -> Result<(), ServerConfigEr
             command: _,
             status,
             regex,
+            retry: _,
         } => {
             if status.is_none() && regex.is_none() {
                 return Err(ServerConfigError::BadHealthCheckDefinition("Health check via shell command requires an return code to match and/or a Regex to match in the standard output".into()));
@@ -139,21 +167,26 @@ fn validate_health_check(healthcheck: &HealthCheck) -> Result<(), ServerConfigEr
     Ok(())
 }
 
-pub fn parse_server_dependencies(file_path: &str) -> Result<Vec<Server>, ServerConfigError> {
+pub fn parse_server_dependencies(
+    file_path: &str,
+) -> Result<(Vec<Server>, Vec<String>), ServerConfigError> {
     let yaml_content =
         fs::read_to_string(file_path).map_err(|e| ServerConfigError::ParseError(e.to_string()))?;
 
     let servers: Vec<Server> = serde_yaml_ng::from_str(&yaml_content)
         .map_err(|e| ServerConfigError::ParseError(e.to_string()))?;
 
-    validate_server_dependencies(&servers)?;
     for server in &servers {
         for healthcheck in &server.check {
             validate_health_check(healthcheck)?;
         }
     }
 
-    Ok(servers)
+    // Apply topological sort to determine order to wake the servers
+    // check for circular and undefined servers along the way
+    let sorted = determine_wakeup_order(&servers)?;
+
+    Ok((servers, sorted))
 }
 
 #[cfg(test)]
@@ -199,7 +232,7 @@ mod tests {
         let servers: Vec<Server> =
             serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
 
-        let result = validate_server_dependencies(&servers);
+        let result = determine_wakeup_order(&servers);
         match result {
             Err(ServerConfigError::CircularDependency(circular_server)) => {
                 assert_eq!(circular_server, "server1".to_string());
@@ -240,7 +273,7 @@ mod tests {
             serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
 
         // Call the validate_dependencies function and check if it passes without errors.
-        let result = validate_server_dependencies(&servers);
+        let result = determine_wakeup_order(&servers);
 
         // We expect no errors, meaning no circular dependencies exist.
         assert!(result.is_ok(), "Expected no circular dependencies");
@@ -278,6 +311,7 @@ mod tests {
         check:
           - type: shell
             command: curl something 
+            retry: 2 minutes
         "#;
 
         let server: Server = serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
