@@ -1,11 +1,12 @@
-use humantime::Duration;
 use regex::Regex;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
     fs,
     net::IpAddr,
+    process::Stdio,
 };
+use tokio::{net::TcpStream, process::Command};
 
 use thiserror::Error;
 
@@ -28,7 +29,7 @@ fn default_duration() -> std::time::Duration {
     std::time::Duration::from_secs(10)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HealthCheck {
     Http {
@@ -41,7 +42,7 @@ pub enum HealthCheck {
     },
     Port {
         ip: String,
-        port: u32,
+        port: u16,
         #[serde(default = "default_duration", with = "humantime_serde")]
         retry: std::time::Duration,
     },
@@ -49,13 +50,13 @@ pub enum HealthCheck {
         command: String,
         #[serde(default = "default_duration", with = "humantime_serde")]
         retry: std::time::Duration,
-        status: Option<u16>,
+        status: Option<i32>,
         #[serde(default, with = "serde_regex")]
         regex: Option<Regex>,
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Server {
     pub name: String,
     pub mac: String,
@@ -73,7 +74,7 @@ fn map_server_names(servers: &[Server]) -> HashMap<String, &Server> {
     servers.iter().map(|s| (s.name.clone(), s)).collect()
 }
 
-fn determine_wakeup_order(servers: &[Server]) -> Result<Vec<String>, ServerConfigError> {
+fn determine_wakeup_order(servers: &[Server]) -> Result<Vec<Server>, ServerConfigError> {
     let server_from_name = map_server_names(servers);
 
     let mut visited = HashSet::new();
@@ -94,7 +95,12 @@ fn determine_wakeup_order(servers: &[Server]) -> Result<Vec<String>, ServerConfi
 
     // Reverse the order to get the correct topological sort
     sorted.reverse();
-    Ok(sorted)
+    let servers_in_order: Vec<Server> = sorted
+        .iter()
+        .map(|name| *server_from_name.get(name).unwrap())
+        .cloned()
+        .collect();
+    Ok(servers_in_order)
 }
 
 fn depth_first_search(
@@ -167,9 +173,7 @@ fn validate_health_check(healthcheck: &HealthCheck) -> Result<(), ServerConfigEr
     Ok(())
 }
 
-pub fn parse_server_dependencies(
-    file_path: &str,
-) -> Result<(Vec<Server>, Vec<String>), ServerConfigError> {
+pub fn parse_server_dependencies(file_path: &str) -> Result<Vec<Server>, ServerConfigError> {
     let yaml_content =
         fs::read_to_string(file_path).map_err(|e| ServerConfigError::ParseError(e.to_string()))?;
 
@@ -186,7 +190,113 @@ pub fn parse_server_dependencies(
     // check for circular and undefined servers along the way
     let sorted = determine_wakeup_order(&servers)?;
 
-    Ok((servers, sorted))
+    Ok(sorted)
+}
+
+async fn http_health_check(
+    url: &str,
+    expected_status: Option<u16>,
+    payload_regex: Option<Regex>,
+) -> bool {
+    if let Ok(response) = reqwest::get(url).await {
+        if let Some(status) = expected_status {
+            println!("Check for status");
+            if response.status().as_u16() != status {
+                return false;
+            }
+            println!("Status matches");
+        }
+        if let Some(regex) = payload_regex {
+            println!("Check for regex: {}", regex);
+            if let Ok(body) = response.text().await {
+                if regex.is_match(&body) {
+                    println!("regex {} matches", regex);
+                    return true;
+                }
+            };
+            return false;
+        }
+        return true;
+    };
+    false
+}
+
+async fn port_health_check(ip: &str, port: u16) -> bool {
+    let address = format!("{}:{}", ip, port);
+    return TcpStream::connect(address).await.is_ok();
+}
+
+async fn shell_health_check(
+    command: &str,
+    expected_status: Option<i32>,
+    payload_regex: Option<Regex>,
+) -> bool {
+    let result = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await;
+
+    if let Ok(output) = result {
+        if let Some(status) = expected_status {
+            if output.status.code() != Some(status) {
+                return false;
+            }
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(regex) = payload_regex {
+            if !regex.is_match(&stdout) {
+                return false;
+            }
+        }
+        return true;
+    };
+    false
+}
+
+// TODO: Find a better way to handle this, it's really ugly
+pub async fn check_wait(check: HealthCheck) -> () {
+    let retry = match check {
+        HealthCheck::Http {
+            url: _,
+            status: _,
+            retry,
+            regex: _,
+        } => retry,
+        HealthCheck::Port {
+            ip: _,
+            port: _,
+            retry,
+        } => retry,
+        HealthCheck::Shell {
+            command: _,
+            retry,
+            status: _,
+            regex: _,
+        } => retry,
+    };
+    tokio::time::sleep(retry).await
+}
+
+pub async fn check_health(check: HealthCheck) -> bool {
+    match check {
+        HealthCheck::Http {
+            url,
+            status,
+            regex,
+            retry: _,
+        } => http_health_check(&url, status, regex).await,
+        HealthCheck::Port { ip, port, retry: _ } => port_health_check(&ip, port).await,
+        HealthCheck::Shell {
+            command,
+            status,
+            regex,
+            retry: _,
+        } => shell_health_check(&command, status, regex).await,
+    }
 }
 
 #[cfg(test)]
