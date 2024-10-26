@@ -66,7 +66,7 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -
         execute!(
             stdout,
             Print(format!(
-                "{} {} [{}]\n",
+                "{} {}: {}\n",
                 icon,
                 server.name.bold(),
                 server_status
@@ -167,8 +167,7 @@ async fn perform_health_checks(
     let checks = server.check.clone();
 
     for (check_index, check) in checks.into_iter().enumerate() {
-        // TODO: Can implement display later, using debug for now
-        let check_display = format!("{:?}", check);
+        let check_display = format!("{}", check);
         {
             let mut servers = server_state.lock().unwrap();
             servers[server_index].checks[check_index] = CheckStatus::Running(check_display.clone());
@@ -250,7 +249,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 checks: server
                     .check
                     .iter()
-                    .map(|check| CheckStatus::Waiting(format!("{:?}", check)))
+                    .map(|check| CheckStatus::Waiting(format!("{}", check)))
                     .collect(),
             })
             .collect(),

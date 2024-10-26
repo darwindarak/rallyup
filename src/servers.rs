@@ -1,8 +1,9 @@
+use colored::Colorize;
 use regex::Regex;
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
-    fs,
+    fmt, fs,
     net::IpAddr,
     process::Stdio,
 };
@@ -47,6 +48,12 @@ pub struct HealthCheck {
     pub method: HealthCheckMethod,
 }
 
+impl fmt::Display for HealthCheck {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.method)
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HealthCheckMethod {
@@ -66,6 +73,35 @@ pub enum HealthCheckMethod {
         #[serde(default, with = "serde_regex")]
         regex: Option<Regex>,
     },
+}
+
+fn truncate_command(command: &str, max_length: usize) -> String {
+    if command.len() > max_length {
+        // Truncate to 27 characters and add "..." to make it 30 characters in total
+        format!("{}{}", &command[..max_length - 3], "...".yellow())
+    } else {
+        command.to_string()
+    }
+}
+
+impl fmt::Display for HealthCheckMethod {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HealthCheckMethod::Http {
+                url,
+                status: _,
+                regex: _,
+            } => write!(f, "{} [{}]", "http".bold(), url),
+            HealthCheckMethod::Port { ip, port } => {
+                write!(f, "{} [{}:{}]", "port".bold(), ip, port)
+            }
+            HealthCheckMethod::Shell {
+                command,
+                status: _,
+                regex: _,
+            } => write!(f, "{} [{}]", "shell".bold(), truncate_command(command, 30)),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
