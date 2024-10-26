@@ -57,8 +57,8 @@ fn create_wol_payload(mac: MacAddr) -> Vec<u8> {
 
 fn vlan_to_bytes(vlan: u16) -> Vec<u8> {
     // Do not need priority bits, using only the remaining 14 bits of the tag
-    let vlan_tag = ((vlan & 0x0FFF) as u16).to_be_bytes();
-    return vlan_tag.to_vec();
+    let vlan_tag = (vlan & 0x0FFF).to_be_bytes();
+    vlan_tag.to_vec()
 }
 
 pub fn send_wol_packet(maybe_mac: &str, interface_name: &str, vlan_id: Option<u16>) -> Result<()> {

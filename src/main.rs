@@ -133,7 +133,6 @@ async fn perform_health_checks(
     server_index: usize,
 ) {
     let mut tasks = Vec::new();
-    let name = server.name.clone();
     let checks = server.check.clone();
 
     for (check_index, check) in checks.into_iter().enumerate() {
@@ -145,7 +144,6 @@ async fn perform_health_checks(
         }
 
         let check = check.clone();
-        let name = name.clone();
         let server_state = Arc::clone(&server_state);
 
         tasks.push(tokio::spawn(async move {

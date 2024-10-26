@@ -221,7 +221,7 @@ async fn http_health_check(
 
 async fn port_health_check(ip: &str, port: u16) -> bool {
     let address = format!("{}:{}", ip, port);
-    return TcpStream::connect(address).await.is_ok();
+    TcpStream::connect(address).await.is_ok()
 }
 
 async fn shell_health_check(
@@ -231,7 +231,7 @@ async fn shell_health_check(
 ) -> bool {
     let result = Command::new("sh")
         .arg("-c")
-        .arg(&command)
+        .arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -256,7 +256,7 @@ async fn shell_health_check(
 }
 
 // TODO: Find a better way to handle this, it's really ugly
-pub async fn check_wait(check: HealthCheck) -> () {
+pub async fn check_wait(check: HealthCheck) {
     let retry = match check {
         HealthCheck::Http {
             url: _,
