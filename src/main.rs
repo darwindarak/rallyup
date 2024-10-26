@@ -173,8 +173,8 @@ async fn perform_health_checks(
 }
 
 fn print_help() {
-    println!("Usage: wakeup <file>");
-    println!("wakeup: A tool to send Wake-on-LAN packets to servers in dependency order");
+    println!("Usage: spinup <file>");
+    println!("spinup: A tool to send Wake-on-LAN packets to servers in dependency order");
 }
 
 #[tokio::main]

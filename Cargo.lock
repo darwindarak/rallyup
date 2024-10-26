@@ -1120,6 +1120,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
+name = "spinup"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "colored",
+ "crossterm",
+ "humantime",
+ "humantime-serde",
+ "pnet",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_regex",
+ "serde_yaml_ng",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1357,25 +1376,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "wakeup"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "colored",
- "crossterm",
- "humantime",
- "humantime-serde",
- "pnet",
- "regex",
- "reqwest",
- "serde",
- "serde_regex",
- "serde_yaml_ng",
- "thiserror",
- "tokio",
-]
 
 [[package]]
 name = "want"

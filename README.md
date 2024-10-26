@@ -1,8 +1,8 @@
-# `wakeup`
+# `spinup`
 
-`wakeup` is a lightweight Wake-On-LAN (WOL) scheduler and dependency manager designed for small businesses and homelabs. It ensures that infrastructure services like firewalls, storage, and hypervisors are brought online in the correct order, particularly after events like power outages.
+`spinup` is a lightweight Wake-On-LAN (WOL) scheduler and dependency manager designed for small businesses and homelabs. It ensures that infrastructure services like firewalls, storage, and hypervisors are brought online in the correct order, particularly after events like power outages.
 
-A typical setup might involve configuring most of the infrastructure for WOL but not Wake-On-Power and configuring `wakeup` to run on a low-power device, such as a Raspberry Pi. When you need to bring the entire environment online, simply power on the host running wakeup, and the rest of the infrastructure will automatically follow in the correct order.
+A typical setup might involve configuring most of the infrastructure for WOL but not Wake-On-Power and configuring `spinup` to run on a low-power device, such as a Raspberry Pi. When you need to bring the entire environment online, simply power on the host running wakeup, and the rest of the infrastructure will automatically follow in the correct order.
 
 ## Features
 
