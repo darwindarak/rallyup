@@ -8,39 +8,12 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 use std::io::{stdout, Write};
-use std::{
-    env,
-    sync::{Arc, Mutex},
-};
-use tokio::time::{sleep, Instant};
+use std::{env, sync::Arc};
+use tokio::{sync::RwLock, time::sleep};
 
-#[derive(Debug, Clone)]
-enum ServerStatus {
-    Waiting,
-    WOLSent,
-    Ok,
-    TimedOut,
-}
-
-#[derive(Debug, Clone)]
-enum CheckStatus {
-    Waiting(String),
-    Running(String),
-    TimedOut(String),
-    Ok(String),
-}
-
-// const SPINNER: &[&str] = &["|", "/", "-", "\\"];
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-#[derive(Debug, Clone)]
-struct Server {
-    name: String,
-    status: ServerStatus,
-    checks: Vec<CheckStatus>,
-}
-
-fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -> u16 {
+fn render_servers(servers: &Vec<servers::Server>, spinner_index: usize, backtrack: u16) -> u16 {
     let mut stdout = stdout();
 
     // Clear what was previously rendered
@@ -58,10 +31,10 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -
     for server in servers {
         // Display the server name and status
         let (icon, server_status) = match server.status {
-            ServerStatus::Waiting => ("◉".normal(), "waiting".normal()),
-            ServerStatus::WOLSent => ("◉".yellow(), "WOL sent".yellow()),
-            ServerStatus::Ok => ("◉".green(), "ok".green()),
-            ServerStatus::TimedOut => ("◉".red(), "timed-out".red()),
+            servers::ServerStatus::Waiting => ("◉".normal(), "waiting".normal()),
+            servers::ServerStatus::WOLSent => ("◉".yellow(), "WOL sent".yellow()),
+            servers::ServerStatus::Ok => ("◉".green(), "ok".green()),
+            servers::ServerStatus::TimedOut => ("◉".red(), "timed-out".red()),
         };
         execute!(
             stdout,
@@ -75,33 +48,33 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -
         .unwrap();
         line_count += 1;
 
-        for (i, check) in server.checks.iter().enumerate() {
+        for (i, check) in server.check.iter().enumerate() {
             let mut extension = "│";
-            if i == server.checks.len() - 1 {
+            if i == server.check.len() - 1 {
                 execute!(stdout, Print("└──")).unwrap();
                 extension = " ";
             } else {
                 execute!(stdout, Print("├──")).unwrap();
             }
-            match check {
-                CheckStatus::Waiting(name) => {
+            match check.status {
+                servers::CheckStatus::Waiting => {
                     execute!(
                         stdout,
                         Print(format!(
                             " {}\n{}    └── Status: {}\n",
-                            name,
+                            check,
                             extension,
                             "waiting".yellow()
                         ))
                     )
                     .unwrap();
                 }
-                CheckStatus::TimedOut(name) => {
+                servers::CheckStatus::TimedOut => {
                     execute!(
                         stdout,
                         Print(format!(
                             " {}\n{}    └── Status: {}\n",
-                            name,
+                            check,
                             extension,
                             "timed-out".red()
                         ))
@@ -109,23 +82,23 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -
                     .unwrap();
                 }
 
-                CheckStatus::Running(name) => {
+                servers::CheckStatus::Running => {
                     let spinner = SPINNER[spinner_index % SPINNER.len()];
                     execute!(
                         stdout,
                         Print(format!(
                             " {}\n{}   └── Status: {}\n",
-                            name, extension, spinner
+                            check, extension, spinner
                         ))
                     )
                     .unwrap();
                 }
-                CheckStatus::Ok(name) => {
+                servers::CheckStatus::Ok => {
                     execute!(
                         stdout,
                         Print(format!(
                             "{}\n{}   └── Status: {}\n",
-                            name,
+                            check,
                             extension,
                             "ok".green()
                         ))
@@ -142,84 +115,19 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -
     line_count
 }
 
-async fn update_server_status(servers: Arc<Mutex<Vec<Server>>>) {
+async fn update_server_status(servers: Arc<RwLock<Vec<servers::Server>>>) {
     let mut spinner_index = 0;
     let mut last_line_count = 0;
 
     loop {
         {
-            let servers = servers.lock().unwrap();
-            last_line_count = render_servers(&servers, spinner_index, last_line_count as u16);
+            let servers = servers.read().await;
+            last_line_count = render_servers(&servers, spinner_index, last_line_count);
         }
 
         spinner_index = (spinner_index + 1) % SPINNER.len();
 
         sleep(std::time::Duration::from_millis(200)).await;
-    }
-}
-
-async fn perform_health_checks(
-    server: &servers::Server,
-    server_state: Arc<Mutex<Vec<Server>>>,
-    server_index: usize,
-) -> ServerStatus {
-    let mut tasks = Vec::new();
-    let checks = server.check.clone();
-
-    for (check_index, check) in checks.into_iter().enumerate() {
-        let check_display = format!("{}", check);
-        {
-            let mut servers = server_state.lock().unwrap();
-            servers[server_index].checks[check_index] = CheckStatus::Running(check_display.clone());
-        }
-
-        let check = check.clone();
-        let server_state = Arc::clone(&server_state);
-
-        tasks.push(tokio::spawn(async move {
-            let start_time = Instant::now();
-            loop {
-                if start_time.elapsed() >= check.timeout {
-                    {
-                        let mut servers = server_state.lock().unwrap();
-                        servers[server_index].checks[check_index] =
-                            CheckStatus::TimedOut(check_display.clone());
-                    }
-                    return CheckStatus::TimedOut(check_display.clone());
-                }
-                let result = servers::check_health(check.method.clone()).await;
-                if result {
-                    break;
-                } else {
-                    tokio::time::sleep(check.retry).await;
-                }
-            }
-            {
-                let mut servers = server_state.lock().unwrap();
-                servers[server_index].checks[check_index] = CheckStatus::Ok(check_display.clone());
-            }
-            return CheckStatus::Ok(check_display.clone());
-        }))
-    }
-    let mut timeout = false;
-    for task in tasks {
-        if let CheckStatus::TimedOut(_) = task.await.unwrap() {
-            timeout = true;
-        }
-    }
-    {
-        let mut servers = server_state.lock().unwrap();
-        servers[server_index].status = if timeout {
-            ServerStatus::TimedOut
-        } else {
-            ServerStatus::Ok
-        };
-    }
-
-    if timeout {
-        ServerStatus::TimedOut
-    } else {
-        ServerStatus::Ok
     }
 }
 
@@ -240,20 +148,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let filename = &args[1];
 
     let wake_order = servers::parse_server_dependencies(filename)?;
-    let server_state = Arc::new(Mutex::new(
-        wake_order
-            .iter()
-            .map(|server| Server {
-                name: server.name.clone(),
-                status: ServerStatus::Waiting,
-                checks: server
-                    .check
-                    .iter()
-                    .map(|check| CheckStatus::Waiting(format!("{}", check)))
-                    .collect(),
-            })
-            .collect(),
-    ));
+
     let mut line_count = 0;
     for server in wake_order.iter() {
         // server status line
@@ -264,22 +159,24 @@ async fn main() -> Result<(), anyhow::Error> {
         line_count += 1;
     }
 
-    let server_state_ptr = Arc::clone(&server_state);
-    tokio::spawn(async move {
-        update_server_status(server_state_ptr).await;
-    });
+    // Need to keep it in a Arc<RwLock> since the status render loop will be reading
+    // the server status while the health checks may be updating it concurrently
+    let servers = Arc::new(RwLock::new(wake_order.clone()));
+
+    tokio::spawn(update_server_status(servers.clone()));
 
     for (server_index, server) in wake_order.into_iter().enumerate() {
         wol::send_wol_packet(&server.mac, &server.interface, server.vlan)?;
         {
-            let mut servers = server_state.lock().unwrap();
-            servers[server_index].status = ServerStatus::WOLSent;
+            let mut servers = servers.write().await;
+            servers[server_index].status = servers::ServerStatus::WOLSent;
         }
 
-        if let ServerStatus::TimedOut =
-            perform_health_checks(&server, server_state.clone(), server_index).await
-        {
-            render_servers(&server_state.lock().unwrap(), 0, line_count);
+        let server_status = servers::perform_health_checks(servers.clone(), server_index).await;
+
+        if let servers::ServerStatus::TimedOut = server_status {
+            let servers = servers.read().await;
+            render_servers(&servers, 0, line_count);
             return Err(anyhow::anyhow!(
                 "health check for {} timed out",
                 server.name
@@ -287,6 +184,9 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    render_servers(&server_state.lock().unwrap(), 0, line_count);
+    {
+        let servers = servers.read().await;
+        render_servers(&servers, 0, line_count);
+    }
     return Ok(());
 }

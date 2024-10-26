@@ -6,8 +6,10 @@ use std::{
     fmt, fs,
     net::IpAddr,
     process::Stdio,
+    sync::Arc,
+    time::Instant,
 };
-use tokio::{net::TcpStream, process::Command};
+use tokio::{net::TcpStream, process::Command, sync::RwLock};
 
 use thiserror::Error;
 
@@ -36,6 +38,15 @@ fn default_timeout_duration() -> std::time::Duration {
     std::time::Duration::from_secs(300)
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub enum CheckStatus {
+    #[default]
+    Waiting,
+    Running,
+    TimedOut,
+    Ok,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct HealthCheck {
     #[serde(default = "default_retry_duration", with = "humantime_serde")]
@@ -46,6 +57,9 @@ pub struct HealthCheck {
 
     #[serde(flatten)]
     pub method: HealthCheckMethod,
+
+    #[serde(skip)]
+    pub status: CheckStatus,
 }
 
 impl fmt::Display for HealthCheck {
@@ -104,6 +118,15 @@ impl fmt::Display for HealthCheckMethod {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ServerStatus {
+    #[default]
+    Waiting,
+    WOLSent,
+    Ok,
+    TimedOut,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Server {
     pub name: String,
@@ -116,6 +139,9 @@ pub struct Server {
     pub depends: Vec<String>,
     #[serde(default)]
     pub check: Vec<HealthCheck>,
+
+    #[serde(skip)]
+    pub status: ServerStatus,
 }
 
 fn map_server_names(servers: &[Server]) -> HashMap<String, &Server> {
@@ -304,6 +330,70 @@ pub async fn check_health(check: HealthCheckMethod) -> bool {
             status,
             regex,
         } => shell_health_check(&command, status, regex).await,
+    }
+}
+
+pub async fn perform_health_checks(
+    servers: Arc<RwLock<Vec<Server>>>,
+    index: usize,
+) -> ServerStatus {
+    let mut tasks = Vec::new();
+
+    let checks = {
+        let servers_read = servers.read().await;
+        servers_read[index].check.clone()
+    };
+
+    for (check_index, check) in checks.into_iter().enumerate() {
+        {
+            let mut servers_write = servers.write().await;
+            servers_write[index].check[check_index].status = CheckStatus::Running;
+        }
+
+        let servers_clone = servers.clone();
+        tasks.push(tokio::spawn(async move {
+            let start_time = Instant::now();
+            loop {
+                if start_time.elapsed() >= check.timeout {
+                    {
+                        let mut servers_write = servers_clone.write().await;
+                        servers_write[index].check[check_index].status = CheckStatus::TimedOut;
+                    }
+                    return CheckStatus::TimedOut;
+                }
+                if check_health(check.method.clone()).await {
+                    break;
+                } else {
+                    tokio::time::sleep(check.retry).await;
+                }
+            }
+            {
+                let mut servers_write = servers_clone.write().await;
+                servers_write[index].check[check_index].status = CheckStatus::Ok;
+            }
+            CheckStatus::Ok
+        }))
+    }
+
+    let mut timeout = false;
+    for task in tasks {
+        if let CheckStatus::TimedOut = task.await.unwrap() {
+            timeout = true;
+        }
+    }
+    {
+        let mut servers_write = servers.write().await;
+        servers_write[index].status = if timeout {
+            ServerStatus::TimedOut
+        } else {
+            ServerStatus::Ok
+        };
+    }
+
+    if timeout {
+        ServerStatus::TimedOut
+    } else {
+        ServerStatus::Ok
     }
 }
 
