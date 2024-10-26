@@ -1,8 +1,8 @@
-# `spinup`
+# `rallyup`
 
-`spinup` is a lightweight Wake-On-LAN (WOL) scheduler and dependency manager designed for small businesses and homelabs. It ensures that infrastructure services like firewalls, storage, and hypervisors are brought online in the correct order, particularly after events like power outages.
+`rallyup` is a lightweight Wake-On-LAN (WOL) scheduler and dependency manager designed for small businesses and homelabs. It ensures that infrastructure services like firewalls, storage, and hypervisors are brought online in the correct order, particularly after events like power outages.
 
-A typical setup involves configuring most of the infrastructure for WOL but not for Wake-On-Power, and setting `spinup` to run on startup on a low-power device like a Raspberry Pi. When you need to bring the entire environment online, simply power on the device running `spinup`, and the rest of the infrastructure will automatically follow in the correct order.
+A typical setup involves configuring most of the infrastructure for WOL but not for Wake-On-Power, and setting `rallyup` to run on startup on a low-power device like a Raspberry Pi. When you need to bring the entire environment online, simply power on the device running `rallyup`, and the rest of the infrastructure will automatically follow in the correct order.
 
 ## Features
 
@@ -19,7 +19,7 @@ A typical setup involves configuring most of the infrastructure for WOL but not 
 ## Usage
 
 ```sh
-spinup servers.yaml
+rallyup servers.yaml
 ```
 
 ## Configuration

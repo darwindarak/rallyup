@@ -132,8 +132,8 @@ async fn update_server_status(servers: Arc<RwLock<Vec<servers::Server>>>) {
 }
 
 fn print_help() {
-    println!("Usage: spinup <file>");
-    println!("spinup: A tool to send Wake-on-LAN packets to servers in dependency order");
+    println!("Usage: rallyup <file>");
+    println!("rallyup: A tool to send Wake-on-LAN packets to servers in dependency order");
 }
 
 #[tokio::main]

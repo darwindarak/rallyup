@@ -1,5 +1,5 @@
 [package]
-name = "spinup"
+name = "rallyup"
 version = "0.1.0"
 edition = "2021"
 authors = ["Darwin Darakananda <darwin@cu.co.th>"]
@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 keywords = ["cli", "tool", "network", "wol", "automation"]
 categories = ["command-line-utilities"]
 description = """
-spinup is a lightweight Wake-On-LAN (WOL) scheduler and dependency manager that ensures infrastructure services, such as firewalls, storage, and hypervisors, are brought online in the correct sequence and at the right time.
+rallyup is a lightweight Wake-On-LAN (WOL) scheduler and dependency manager that ensures infrastructure services, such as firewalls, storage, and hypervisors, are brought online in the correct sequence and at the right time.
 """
 
 [dependencies]
