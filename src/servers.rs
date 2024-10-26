@@ -379,7 +379,7 @@ mod tests {
         "#;
 
         let server: Server = serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
-        let result = validate_health_check(&server.check[0]);
+        let result = validate_health_check(&server.check[0].method);
         assert!(matches!(
             result,
             Err(ServerConfigError::BadHealthCheckDefinition(_))
@@ -401,7 +401,7 @@ mod tests {
         "#;
 
         let server: Server = serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
-        let result = validate_health_check(&server.check[0]);
+        let result = validate_health_check(&server.check[0].method);
         assert!(matches!(
             result,
             Err(ServerConfigError::BadHealthCheckDefinition(_))
@@ -423,7 +423,7 @@ mod tests {
         "#;
 
         let server: Server = serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
-        let result = validate_health_check(&server.check[0]);
+        let result = validate_health_check(&server.check[0].method);
 
         assert!(matches!(
             result,
@@ -455,7 +455,7 @@ mod tests {
 
         let server: Server = serde_yaml_ng::from_str(yaml_data).expect("Failed to parse YAML");
         for healthcheck in &server.check {
-            let result = validate_health_check(&healthcheck);
+            let result = validate_health_check(&healthcheck.method);
             assert!(result.is_ok())
         }
     }
@@ -497,5 +497,157 @@ mod tests {
             result.into_iter().map(|s| s.name).collect::<Vec<String>>(),
             expected_order
         );
+    }
+
+    #[tokio::test]
+    async fn test_http_health_check_success() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/health")
+            .with_status(200)
+            .with_body("healthy")
+            .create_async()
+            .await;
+
+        let url = format!("{}/health", server.url());
+
+        // Status and regex match
+        let status = Some(200);
+        let regex = Some(Regex::new("health").unwrap());
+
+        let result = http_health_check(&url, status, regex).await;
+        assert!(result);
+
+        // Just status
+        let status = Some(200);
+        let regex = None;
+
+        let result = http_health_check(&url, status, regex).await;
+        assert!(result);
+
+        // Just regex
+        let status = None;
+        let regex = Some(Regex::new("health").unwrap());
+
+        let result = http_health_check(&url, status, regex).await;
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_http_health_check_fail() {
+        // Mock a failed response
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/health")
+            .with_status(503)
+            .with_body("Service Unavailable")
+            .create_async()
+            .await;
+
+        let url = format!("{}/health", server.url());
+
+        // Status and regex match
+        let status = Some(200);
+        let regex = Some(Regex::new("health").unwrap());
+
+        let result = http_health_check(&url, status, regex).await;
+        assert!(!result);
+
+        // Just status
+        let status = Some(200);
+        let regex = None;
+
+        let result = http_health_check(&url, status, regex).await;
+        assert!(!result);
+
+        // Just regex
+        let status = None;
+        let regex = Some(Regex::new("health").unwrap());
+
+        let result = http_health_check(&url, status, regex).await;
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_port_health_check_success() {
+        // Set up a mock TCP listener on an available port
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+
+        let port = listener.local_addr().unwrap().port();
+        let ip = "127.0.0.1";
+
+        // Simulate the health check
+        let result = port_health_check(&ip, port).await;
+        assert!(result);
+
+        drop(listener); // Close the listener
+    }
+
+    #[tokio::test]
+    async fn test_port_health_check_fail() {
+        // Set up a mock TCP listener on an available port
+        // Could probably just pick a random port, but I want to make sure
+        // we don't accidentally pick a port that's in use by other process
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+
+        let ip = "127.0.0.1";
+
+        let result = port_health_check(&ip, port).await;
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_shell_health_check_success() {
+        let command = "echo 'hello'";
+
+        // Status and regex
+        let status = Some(0);
+        let regex = Some(Regex::new("hello").unwrap());
+        let result = shell_health_check(&command, status, regex).await;
+
+        assert!(result);
+
+        // Just status
+        let status = Some(0);
+        let regex = None;
+        let result = shell_health_check(&command, status, regex).await;
+
+        assert!(result);
+
+        // Just regex
+        let status = None;
+        let regex = Some(Regex::new("hello").unwrap());
+        let result = shell_health_check(&command, status, regex).await;
+
+        assert!(result);
+    }
+
+    #[tokio::test]
+    async fn test_shell_health_check_fail() {
+        let command = "echo 'hello'";
+
+        // Regex does not match
+        let status = None;
+        let regex = Some(Regex::new("world").unwrap());
+        let result = shell_health_check(&command, status, regex).await;
+        assert!(!result);
+
+        // Status does not match
+        let status = Some(1);
+        let regex = None;
+        let result = shell_health_check(&command, status, regex).await;
+        assert!(!result);
+
+        // Regex and status does not match
+        let status = Some(1);
+        let regex = Some(Regex::new("world").unwrap());
+        let result = shell_health_check(&command, status, regex).await;
+        assert!(!result);
     }
 }
