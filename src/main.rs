@@ -11,19 +11,21 @@ use crossterm::{
     style::Print,
     terminal::{Clear, ClearType},
 };
-use tokio::time::sleep;
+use tokio::time::{sleep, Instant};
 
 #[derive(Debug, Clone)]
 enum ServerStatus {
     Waiting,
     WOLSent,
     Ok,
+    TimedOut,
 }
 
 #[derive(Debug, Clone)]
 enum CheckStatus {
     Waiting(String),
     Running(String),
+    TimedOut(String),
     Ok(String),
 }
 
@@ -49,6 +51,7 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize) {
             ServerStatus::Waiting => ("◉".normal(), "waiting".normal()),
             ServerStatus::WOLSent => ("◉".yellow(), "WOL sent".yellow()),
             ServerStatus::Ok => ("◉".green(), "ok".green()),
+            ServerStatus::TimedOut => ("◉".red(), "timed-out".green()),
         };
         execute!(
             stdout,
@@ -82,6 +85,19 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize) {
                     )
                     .unwrap();
                 }
+                CheckStatus::TimedOut(name) => {
+                    execute!(
+                        stdout,
+                        Print(format!(
+                            " {}\n{}    └── Status: {}\n",
+                            name,
+                            extension,
+                            "timed-out".red()
+                        ))
+                    )
+                    .unwrap();
+                }
+
                 CheckStatus::Running(name) => {
                     let spinner = SPINNER[spinner_index % SPINNER.len()];
                     execute!(
@@ -131,7 +147,7 @@ async fn perform_health_checks(
     server: &servers::Server,
     server_state: Arc<Mutex<Vec<Server>>>,
     server_index: usize,
-) {
+) -> ServerStatus {
     let mut tasks = Vec::new();
     let checks = server.check.clone();
 
@@ -147,7 +163,16 @@ async fn perform_health_checks(
         let server_state = Arc::clone(&server_state);
 
         tasks.push(tokio::spawn(async move {
+            let start_time = Instant::now();
             loop {
+                if start_time.elapsed() >= check.timeout {
+                    {
+                        let mut servers = server_state.lock().unwrap();
+                        servers[server_index].checks[check_index] =
+                            CheckStatus::TimedOut(check_display.clone());
+                    }
+                    return CheckStatus::TimedOut(check_display.clone());
+                }
                 let result = servers::check_health(check.method.clone()).await;
                 if result {
                     break;
@@ -159,14 +184,28 @@ async fn perform_health_checks(
                 let mut servers = server_state.lock().unwrap();
                 servers[server_index].checks[check_index] = CheckStatus::Ok(check_display.clone());
             }
+            return CheckStatus::Ok(check_display.clone());
         }))
     }
+    let mut timeout = false;
     for task in tasks {
-        task.await.unwrap();
+        if let CheckStatus::TimedOut(_) = task.await.unwrap() {
+            timeout = true;
+        }
     }
     {
         let mut servers = server_state.lock().unwrap();
-        servers[server_index].status = ServerStatus::Ok;
+        servers[server_index].status = if timeout {
+            ServerStatus::TimedOut
+        } else {
+            ServerStatus::Ok
+        };
+    }
+
+    if timeout {
+        ServerStatus::TimedOut
+    } else {
+        ServerStatus::Ok
     }
 }
 
@@ -214,7 +253,15 @@ async fn main() -> Result<(), anyhow::Error> {
             servers[server_index].status = ServerStatus::WOLSent;
         }
 
-        perform_health_checks(&server, server_state.clone(), server_index).await
+        if let ServerStatus::TimedOut =
+            perform_health_checks(&server, server_state.clone(), server_index).await
+        {
+            render_servers(&server_state.lock().unwrap(), 0);
+            return Err(anyhow::anyhow!(
+                "health check for {} timed out",
+                server.name
+            ));
+        }
     }
 
     render_servers(&server_state.lock().unwrap(), 0);
