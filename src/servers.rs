@@ -25,31 +25,43 @@ pub enum ServerConfigError {
     BadHealthCheckDefinition(String),
 }
 
-fn default_duration() -> std::time::Duration {
+fn default_retry_duration() -> std::time::Duration {
     std::time::Duration::from_secs(10)
+}
+
+fn default_timeout_duration() -> std::time::Duration {
+    // 5 minutes timeout
+    // some servers might take longer, but that can be overridden in the config
+    std::time::Duration::from_secs(300)
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct HealthCheck {
+    #[serde(default = "default_retry_duration", with = "humantime_serde")]
+    pub retry: std::time::Duration,
+
+    #[serde(default = "default_timeout_duration", with = "humantime_serde")]
+    pub timeout: std::time::Duration,
+
+    #[serde(flatten)]
+    pub method: HealthCheckMethod,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum HealthCheck {
+pub enum HealthCheckMethod {
     Http {
         url: String,
         status: Option<u16>,
-        #[serde(default = "default_duration", with = "humantime_serde")]
-        retry: std::time::Duration,
         #[serde(default, with = "serde_regex")]
         regex: Option<Regex>,
     },
     Port {
         ip: String,
         port: u16,
-        #[serde(default = "default_duration", with = "humantime_serde")]
-        retry: std::time::Duration,
     },
     Shell {
         command: String,
-        #[serde(default = "default_duration", with = "humantime_serde")]
-        retry: std::time::Duration,
         status: Option<i32>,
         #[serde(default, with = "serde_regex")]
         regex: Option<Regex>,
@@ -133,34 +145,28 @@ fn depth_first_search(
     Ok(())
 }
 
-fn validate_health_check(healthcheck: &HealthCheck) -> Result<(), ServerConfigError> {
+fn validate_health_check(healthcheck: &HealthCheckMethod) -> Result<(), ServerConfigError> {
     match healthcheck {
-        HealthCheck::Http {
+        HealthCheckMethod::Http {
             url: _,
             status,
             regex,
-            retry: _,
         } => {
             if status.is_none() && regex.is_none() {
                 return Err(ServerConfigError::BadHealthCheckDefinition("HTTP health check requires an HTTP status code to match and/or a Regex to match in the response".into()));
             }
         }
-        HealthCheck::Port {
-            ip,
-            port: _,
-            retry: _,
-        } => {
+        HealthCheckMethod::Port { ip, port: _ } => {
             if ip.parse::<IpAddr>().is_err() {
                 return Err(ServerConfigError::BadHealthCheckDefinition(
                     "Port check requires a valid IP address".into(),
                 ));
             }
         }
-        HealthCheck::Shell {
+        HealthCheckMethod::Shell {
             command: _,
             status,
             regex,
-            retry: _,
         } => {
             if status.is_none() && regex.is_none() {
                 return Err(ServerConfigError::BadHealthCheckDefinition("Health check via shell command requires an return code to match and/or a Regex to match in the standard output".into()));
@@ -180,7 +186,7 @@ pub fn parse_server_dependencies(file_path: &str) -> Result<Vec<Server>, ServerC
 
     for server in &servers {
         for healthcheck in &server.check {
-            validate_health_check(healthcheck)?;
+            validate_health_check(&healthcheck.method)?;
         }
     }
 
@@ -255,44 +261,16 @@ async fn shell_health_check(
     false
 }
 
-// TODO: Find a better way to handle this, it's really ugly
-pub async fn check_wait(check: HealthCheck) {
-    let retry = match check {
-        HealthCheck::Http {
-            url: _,
-            status: _,
-            retry,
-            regex: _,
-        } => retry,
-        HealthCheck::Port {
-            ip: _,
-            port: _,
-            retry,
-        } => retry,
-        HealthCheck::Shell {
-            command: _,
-            retry,
-            status: _,
-            regex: _,
-        } => retry,
-    };
-    tokio::time::sleep(retry).await
-}
-
-pub async fn check_health(check: HealthCheck) -> bool {
+pub async fn check_health(check: HealthCheckMethod) -> bool {
     match check {
-        HealthCheck::Http {
-            url,
-            status,
-            regex,
-            retry: _,
-        } => http_health_check(&url, status, regex).await,
-        HealthCheck::Port { ip, port, retry: _ } => port_health_check(&ip, port).await,
-        HealthCheck::Shell {
+        HealthCheckMethod::Http { url, status, regex } => {
+            http_health_check(&url, status, regex).await
+        }
+        HealthCheckMethod::Port { ip, port } => port_health_check(&ip, port).await,
+        HealthCheckMethod::Shell {
             command,
             status,
             regex,
-            retry: _,
         } => shell_health_check(&command, status, regex).await,
     }
 }

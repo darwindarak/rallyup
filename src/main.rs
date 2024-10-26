@@ -148,11 +148,11 @@ async fn perform_health_checks(
 
         tasks.push(tokio::spawn(async move {
             loop {
-                let result = servers::check_health(check.clone()).await;
+                let result = servers::check_health(check.method.clone()).await;
                 if result {
                     break;
                 } else {
-                    servers::check_wait(check.clone()).await
+                    tokio::time::sleep(check.retry).await;
                 }
             }
             {
