@@ -1,15 +1,16 @@
-use std::io::{stdout, Write};
-use std::{
-    env,
-    sync::{Arc, Mutex},
-};
 mod servers;
 mod wol;
+
 use colored::*;
 use crossterm::{
     execute,
     style::Print,
     terminal::{Clear, ClearType},
+};
+use std::io::{stdout, Write};
+use std::{
+    env,
+    sync::{Arc, Mutex},
 };
 use tokio::time::{sleep, Instant};
 
@@ -39,11 +40,20 @@ struct Server {
     checks: Vec<CheckStatus>,
 }
 
-fn render_servers(servers: &Vec<Server>, spinner_index: usize) {
+fn render_servers(servers: &Vec<Server>, spinner_index: usize, backtrack: u16) -> u16 {
     let mut stdout = stdout();
 
-    // Clear the screen
-    execute!(stdout, Clear(ClearType::All)).unwrap();
+    // Clear what was previously rendered
+    if backtrack > 0 {
+        execute!(
+            stdout,
+            crossterm::cursor::MoveToPreviousLine(backtrack),
+            Clear(ClearType::FromCursorDown)
+        )
+        .unwrap();
+    }
+
+    let mut line_count = 0;
 
     for server in servers {
         // Display the server name and status
@@ -51,7 +61,7 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize) {
             ServerStatus::Waiting => ("◉".normal(), "waiting".normal()),
             ServerStatus::WOLSent => ("◉".yellow(), "WOL sent".yellow()),
             ServerStatus::Ok => ("◉".green(), "ok".green()),
-            ServerStatus::TimedOut => ("◉".red(), "timed-out".green()),
+            ServerStatus::TimedOut => ("◉".red(), "timed-out".red()),
         };
         execute!(
             stdout,
@@ -63,6 +73,7 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize) {
             ))
         )
         .unwrap();
+        line_count += 1;
 
         for (i, check) in server.checks.iter().enumerate() {
             let mut extension = "│";
@@ -122,19 +133,23 @@ fn render_servers(servers: &Vec<Server>, spinner_index: usize) {
                     .unwrap();
                 }
             }
+            line_count += 2;
         }
         execute!(stdout, Print("\n")).unwrap();
+        line_count += 1;
     }
     stdout.flush().unwrap();
+    line_count
 }
 
 async fn update_server_status(servers: Arc<Mutex<Vec<Server>>>) {
     let mut spinner_index = 0;
+    let mut last_line_count = 0;
 
     loop {
         {
             let servers = servers.lock().unwrap();
-            render_servers(&servers, spinner_index);
+            last_line_count = render_servers(&servers, spinner_index, last_line_count as u16);
         }
 
         spinner_index = (spinner_index + 1) % SPINNER.len();
@@ -240,6 +255,15 @@ async fn main() -> Result<(), anyhow::Error> {
             })
             .collect(),
     ));
+    let mut line_count = 0;
+    for server in wake_order.iter() {
+        // server status line
+        line_count += 1;
+        // 2 lines per health check
+        line_count += server.check.len() as u16 * 2;
+        // newline between servers
+        line_count += 1;
+    }
 
     let server_state_ptr = Arc::clone(&server_state);
     tokio::spawn(async move {
@@ -256,7 +280,7 @@ async fn main() -> Result<(), anyhow::Error> {
         if let ServerStatus::TimedOut =
             perform_health_checks(&server, server_state.clone(), server_index).await
         {
-            render_servers(&server_state.lock().unwrap(), 0);
+            render_servers(&server_state.lock().unwrap(), 0, line_count);
             return Err(anyhow::anyhow!(
                 "health check for {} timed out",
                 server.name
@@ -264,6 +288,6 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    render_servers(&server_state.lock().unwrap(), 0);
+    render_servers(&server_state.lock().unwrap(), 0, line_count);
     return Ok(());
 }

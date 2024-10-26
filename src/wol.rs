@@ -129,10 +129,10 @@ pub fn send_wol_packet(maybe_mac: &str, interface_name: &str, vlan_id: Option<u1
         std::io::Error::new(std::io::ErrorKind::Other, "failed to send WOL packet")
     })??;
 
-    println!(
-        "WOL packet sent successfully over interface: {}",
-        interface_name
-    );
+    //println!(
+    //    "WOL packet sent successfully over interface: {}",
+    //    interface_name
+    //);
 
     Ok(())
 }

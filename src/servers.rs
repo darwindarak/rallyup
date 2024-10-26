@@ -204,17 +204,13 @@ async fn http_health_check(
 ) -> bool {
     if let Ok(response) = reqwest::get(url).await {
         if let Some(status) = expected_status {
-            println!("Check for status");
             if response.status().as_u16() != status {
                 return false;
             }
-            println!("Status matches");
         }
         if let Some(regex) = payload_regex {
-            println!("Check for regex: {}", regex);
             if let Ok(body) = response.text().await {
                 if regex.is_match(&body) {
-                    println!("regex {} matches", regex);
                     return true;
                 }
             };
