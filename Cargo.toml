@@ -15,3 +15,5 @@ humantime = "2.1.0"
 humantime-serde = "1.1.1"
 reqwest = "0.12.8"
 tokio = { version = "1", features = ["full"] }
+crossterm = "0.28.1"
+colored = "2.1.0"
