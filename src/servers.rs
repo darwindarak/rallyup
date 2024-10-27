@@ -118,7 +118,7 @@ impl fmt::Display for HealthCheckMethod {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ServerStatus {
     #[default]
     Waiting,
@@ -771,5 +771,45 @@ mod tests {
         let regex = Some(Regex::new("world").unwrap());
         let result = shell_health_check(&command, status, regex).await;
         assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_health_check_timeout() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/")
+            .with_status(500)
+            .expect(3)
+            .create_async()
+            .await;
+
+        let yaml_data = r#"
+        - name: "timeout_test_server"
+          mac: "00:11:22:33:44:55"
+          interface: "eth0"
+          vlan: 100
+          depends: []
+          check:
+            - type: http
+              url: <url>
+              status: 200
+              retry: 800 ms
+              timeout: 2s
+    "#;
+
+        let yaml_data = yaml_data.replace("<url>", &server.url());
+
+        let servers: Vec<Server> =
+            serde_yaml_ng::from_str(&yaml_data).expect("Failed to parse YAML");
+
+        let server_state = Arc::new(RwLock::new(servers));
+
+        let start_time = Instant::now();
+        let result = perform_health_checks(server_state.clone(), 0).await;
+
+        assert!(start_time.elapsed() >= std::time::Duration::from_secs(2));
+        assert_eq!(result, ServerStatus::TimedOut);
+        // Also check that the number of retries is correct
+        mock.assert();
     }
 }
