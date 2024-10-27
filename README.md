@@ -4,6 +4,7 @@
 
 A typical setup involves configuring most of the infrastructure for WOL but not for Wake-On-Power, and setting `rallyup` to run on startup on a low-power device like a Raspberry Pi. When you need to bring the entire environment online, simply power on the device running `rallyup`, and the rest of the infrastructure will automatically follow in the correct order.
 
+![Tests](https://github.com/darwindarak/rallyup/actions/workflows/tests.yml/badge.svg)
 [![Crates.io](https://img.shields.io/crates/v/rallyup.svg)](https://crates.io/crates/rallyup)
 
 ## Features
