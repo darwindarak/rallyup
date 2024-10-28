@@ -1,6 +1,4 @@
 name: Release Binary
-on:
-
 permissions:
   contents: write
 
