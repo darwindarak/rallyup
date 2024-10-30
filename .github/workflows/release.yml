@@ -23,34 +23,12 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
           - target: x86_64-apple-darwin
             os: macos-latest
           - target: aarch64-apple-darwin
             os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Install Windows dependencies
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $vsPath = & "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          if (-not $vsPath) {
-              Write-Output "Visual Studio installation with required components not found."
-              exit 1
-          }
-          $msvcToolsPath = Get-ChildItem -Path "$vsPath\VC\Tools\MSVC" | Sort-Object -Property Name -Descending | Select-Object -First 1 -ExpandProperty FullName
-          $libPath = Join-Path -Path $msvcToolsPath -ChildPath 'lib\x64'
-
-          # Print path for debugging
-          Write-Output "Resolved Visual Studio library path: $libPath"
-
-          # Download, extract, and move Packet.lib
-          Invoke-WebRequest -UseBasicParsing https://www.winpcap.org/install/bin/WpdPack_4_1_2.zip -OutFile "${Env:TEMP}\wpd.zip"
-          Expand-Archive -LiteralPath "${Env:TEMP}\wpd.zip" -DestinationPath "${Env:TEMP}\wpd"
-          Move-Item -LiteralPath "${Env:TEMP}\wpd\WpdPack\Lib\Lib\x64\Packet.lib" -Destination $libPath -Force
-
       - uses: actions/checkout@v4
 
       - uses: taiki-e/upload-rust-binary-action@v1
