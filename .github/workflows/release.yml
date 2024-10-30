@@ -36,7 +36,7 @@ jobs:
         run: |
                 Invoke-WebRequest -UseBasicParsing https://www.winpcap.org/install/bin/WpdPack_4_1_2.zip -OutFile "${Env:TEMP}\wpd.zip"
                 Expand-Archive -LiteralPath "${Env:TEMP}\wpd.zip" -DestinationPath "${Env:TEMP}\wpd"
-                Move-Item -LiteralPath "${Env:TEMP}\wpd\WpdPack\Lib" -Destination lib
+                Move-Item -LiteralPath "${Env:TEMP}\wpd\WpdPack\Lib" -Destination "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.41.34120/lib\x64"
 
       - uses: actions/checkout@v4
 
