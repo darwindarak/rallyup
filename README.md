@@ -172,7 +172,7 @@ This is to provide the option of user-defined health checks.
   check:
     - type: command
       command: "ping -c 192.168.200.10"
-      status 0
+      status: 0
 ```
 
 ## License
